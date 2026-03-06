@@ -222,7 +222,7 @@ def ticket_summary_text(ticket):
 def call_claude(system, user, max_tokens=2000):
     """Single Claude call, returns text."""
     msg = anthropic_client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5",
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user}]
@@ -233,10 +233,18 @@ def call_claude(system, user, max_tokens=2000):
 def call_claude_json(system, user, max_tokens=2000):
     """Claude call that returns parsed JSON."""
     system += "\n\nRespond ONLY with valid JSON. No markdown, no backticks, no explanation."
-    text = call_claude(system, user, max_tokens)
-    # Strip any accidental markdown fences
-    text = text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-    return json.loads(text)
+    try:
+        text = call_claude(system, user, max_tokens)
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1]
+        if text.endswith("```"):
+            text = text.rsplit("```", 1)[0]
+        text = text.strip()
+        return json.loads(text)
+    except Exception as e:
+        app.logger.error(f"call_claude_json failed: {e}")
+        return []
 
 
 # ---------------------------------------------------------------------------
