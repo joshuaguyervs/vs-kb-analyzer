@@ -272,14 +272,20 @@ def call_claude_json(system, user, max_tokens=2000):
     try:
         text = call_claude(system, user, max_tokens)
         text = text.strip()
+        # Strip markdown fences if present
         if text.startswith("```"):
             text = text.split("\n", 1)[-1]
         if text.endswith("```"):
             text = text.rsplit("```", 1)[0]
         text = text.strip()
         return json.loads(text)
+    except json.JSONDecodeError as e:
+        app.logger.error(f"call_claude_json JSON parse failed: {e}")
+        app.logger.error(f"Raw response (first 500 chars): {text[:500]!r}")
+        app.logger.error(f"Raw response (last 200 chars): {text[-200:]!r}")
+        return []
     except Exception as e:
-        app.logger.error(f"call_claude_json failed: {e}")
+        app.logger.error(f"call_claude_json failed: {type(e).__name__}: {e}")
         return []
 
 
@@ -469,7 +475,7 @@ Return as JSON with keys:
 - troubleshooting: array of objects with "problem" and "solution" keys
 - changelog: array of strings describing what changed vs the original"""
 
-    result = call_claude_json(system, user, max_tokens=4000)
+    result = call_claude_json(system, user, max_tokens=6000)
     if not isinstance(result, dict):
         result = {"error": "Claude returned an unexpected response. Try again."}
     else:
