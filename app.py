@@ -656,8 +656,13 @@ def api_outdated():
 def api_draft_article(cluster_id):
     if state["load_status"] != "ready":
         return jsonify({"error": "Data not ready"}), 503
-    clusters = state["analysis_cache"].get("clusters", [])
-    cluster = next((c for c in clusters if c.get("id") == cluster_id), None)
+    # Search all cluster cache entries (key is filter-fingerprinted)
+    cluster = None
+    for key, val in state["analysis_cache"].items():
+        if key.startswith("clusters:") or key == "clusters":
+            cluster = next((c for c in (val or []) if c.get("id") == cluster_id), None)
+            if cluster:
+                break
     if not cluster:
         return jsonify({"error": "Cluster not found -- run gap analysis first"}), 404
     result = generate_new_article_draft(cluster)
