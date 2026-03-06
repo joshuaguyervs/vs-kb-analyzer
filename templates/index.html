@@ -213,6 +213,10 @@
     <select class="filter-input filter-select" id="filterOrg" onchange="applyFilters()">
       <option value="">All organizations</option>
     </select>
+    <span class="filter-sep">|</span>
+    <select class="filter-input filter-select" id="filterExcludeRequester" onchange="addRequesterExclusion()">
+      <option value="">Exclude requester...</option>
+    </select>
     <div id="filterChips" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
     <span class="filter-count" id="filterCount"></span>
     <button class="btn" id="filterResetBtn" onclick="resetFilters()" style="display:none;">Clear All</button>
@@ -545,6 +549,7 @@ function closeDetail() { document.getElementById('detailPanel').classList.remove
 // ---------------------------------------------------------------------------
 let activeTagsInclude = [];
 let activeTagsExclude = [];
+let activeExcludedRequesters = {}; // id -> name
 
 function loadFilterOptions() {
   fetch('/api/filter-options').then(r => r.json()).then(d => {
@@ -561,6 +566,10 @@ function loadFilterOptions() {
     const orgEl = document.getElementById('filterOrg');
     d.orgs.forEach(o => {
       orgEl.innerHTML += `<option value="${o.id}">${o.name}</option>`;
+    });
+    const reqEl = document.getElementById('filterExcludeRequester');
+    (d.requesters || []).forEach(r => {
+      reqEl.innerHTML += `<option value="${r.id}">${r.name}</option>`;
     });
   });
 }
@@ -581,6 +590,16 @@ function removeTagFilter(tag, type) {
   applyFilters();
 }
 
+function addRequesterExclusion() {
+  const el = document.getElementById('filterExcludeRequester');
+  const id = el.value;
+  const name = el.options[el.selectedIndex].text;
+  if (!id) return;
+  el.value = '';
+  activeExcludedRequesters[id] = name;
+  applyFilters();
+}
+
 function applyFilters() {
   const dateFrom = document.getElementById('filterDateFrom').value;
   const dateTo = document.getElementById('filterDateTo').value;
@@ -592,7 +611,8 @@ function applyFilters() {
     tags_include: activeTagsInclude,
     tags_exclude: activeTagsExclude,
     assignee_ids: assigneeId ? [assigneeId] : [],
-    org_ids: orgId ? [orgId] : []
+    org_ids: orgId ? [orgId] : [],
+    exclude_requester_ids: Object.keys(activeExcludedRequesters)
   };
   fetch('/api/filters', {
     method: 'POST',
@@ -601,7 +621,7 @@ function applyFilters() {
   }).then(r => r.json()).then(d => {
     updateFilterChips();
     document.getElementById('filterCount').textContent = d.matched_tickets.toLocaleString() + ' tickets matched';
-    const hasFilters = dateFrom || dateTo || assigneeId || orgId || activeTagsInclude.length || activeTagsExclude.length;
+    const hasFilters = dateFrom || dateTo || assigneeId || orgId || activeTagsInclude.length || activeTagsExclude.length || Object.keys(activeExcludedRequesters).length;
     document.getElementById('filterCount').className = 'filter-count' + (hasFilters ? ' active' : '');
     document.getElementById('filterBar').className = 'filter-bar' + (hasFilters ? ' has-filters' : '');
     document.getElementById('filterResetBtn').style.display = hasFilters ? 'inline-flex' : 'none';
@@ -621,7 +641,15 @@ function updateFilterChips() {
   activeTagsExclude.forEach(t => {
     html += `<span class="filter-chip" style="background:var(--red-dim);border-color:var(--red);color:var(--red);" onclick="removeTagFilter('${t}','exclude')" title="Click to remove">-${t} x</span>`;
   });
+  Object.entries(activeExcludedRequesters).forEach(([id, name]) => {
+    html += `<span class="filter-chip" style="background:var(--red-dim);border-color:var(--red);color:var(--red);" onclick="removeRequesterExclusion('${id}')" title="Click to remove">excl: ${name} x</span>`;
+  });
   chips.innerHTML = html;
+}
+
+function removeRequesterExclusion(id) {
+  delete activeExcludedRequesters[id];
+  applyFilters();
 }
 
 function resetFilters() {
@@ -631,6 +659,8 @@ function resetFilters() {
   document.getElementById('filterDateTo').value = '';
   document.getElementById('filterAssignee').value = '';
   document.getElementById('filterOrg').value = '';
+  document.getElementById('filterExcludeRequester').value = '';
+  activeExcludedRequesters = {};
   updateFilterChips();
   applyFilters();
 }

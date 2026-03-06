@@ -50,7 +50,8 @@ state = {
         "tags_include": [],
         "tags_exclude": [],
         "assignee_ids": [],
-        "org_ids": []
+        "org_ids": [],
+        "exclude_requester_ids": []
     }
 }
 
@@ -81,6 +82,9 @@ def get_filtered_tickets():
         if f["assignee_ids"] and t.get("assignee_id") not in f["assignee_ids"]:
             continue
         if f["org_ids"] and t.get("organization_id") not in f["org_ids"]:
+            continue
+
+        if f["exclude_requester_ids"] and t.get("requester_id") in f["exclude_requester_ids"]:
             continue
 
         result.append(t)
@@ -135,23 +139,33 @@ def load_tickets():
         # Filter out automation and smoke test tickets
         def is_noise(ticket):
             subject = (ticket.get("subject") or "").lower()
-            requester = (ticket.get("requester", {}) or {})
-            requester_email = (requester.get("email") or "").lower()
-            requester_name = (requester.get("name") or "").lower()
             tags = [t.lower() for t in (ticket.get("tags") or [])]
             comments = ticket.get("comments") or []
             comment_bodies = " ".join((c.get("body") or "").lower() for c in comments)
 
-            if "smoke test" in subject or "smoketest" in subject:
+            # Subject-based smoke test detection
+            if "smoke test" in subject or "smoketest" in subject or "smoke_test" in subject:
                 return True
+            # Tag-based
+            if any(t in tags for t in ("smoke_test", "smoketest", "smoke-test", "automation_test")):
+                return True
+            # Comment body
             if "smoke test" in comment_bodies or "smoketest" in comment_bodies:
                 return True
-            if "smoke_test" in tags or "smoketest" in tags:
-                return True
-            if "support automation" in requester_name:
-                return True
-            if "support+automation" in requester_email or "automation@vergesense" in requester_email:
-                return True
+            # Requester name/email (sideloaded object if present)
+            requester = ticket.get("requester") or {}
+            if isinstance(requester, dict):
+                req_name = (requester.get("name") or "").lower()
+                req_email = (requester.get("email") or "").lower()
+                if "support automation" in req_name or "automation@vergesense" in req_email or "support+automation" in req_email:
+                    return True
+            # Via channel - tickets submitted via API by automation accounts
+            via = ticket.get("via") or {}
+            if isinstance(via, dict):
+                via_source = (via.get("channel") or "")
+                via_name = str((via.get("source") or {}).get("from", {}) or "").lower()
+                if "automation" in via_name or "smoke" in via_name:
+                    return True
             return False
 
         state["tickets"] = [t for t in all_tickets if not is_noise(t)]
@@ -540,9 +554,18 @@ def api_filter_options():
         for tag in (t.get("tags") or []):
             tags.add(tag)
 
+    requesters = {}
+    for t in state["tickets"]:
+        rid = t.get("requester_id")
+        if rid:
+            req = t.get("requester") or {}
+            rname = (req.get("name") or req.get("email") or str(rid)) if isinstance(req, dict) else str(rid)
+            requesters[rid] = rname
+
     return jsonify({
         "assignees": [{"id": k, "name": v} for k, v in sorted(assignees.items(), key=lambda x: x[1])],
         "orgs": [{"id": k, "name": v} for k, v in sorted(orgs.items(), key=lambda x: x[1])],
+        "requesters": [{"id": k, "name": v} for k, v in sorted(requesters.items(), key=lambda x: x[1])],
         "tags": sorted(list(tags))
     })
 
@@ -561,6 +584,7 @@ def api_set_filters():
     state["filters"]["tags_exclude"] = data.get("tags_exclude") or []
     state["filters"]["assignee_ids"] = [int(x) for x in data.get("assignee_ids") or []]
     state["filters"]["org_ids"] = [int(x) for x in data.get("org_ids") or []]
+    state["filters"]["exclude_requester_ids"] = [int(x) for x in data.get("exclude_requester_ids") or []]
     # Clear analysis cache so results re-run against new filter set
     state["analysis_cache"] = {}
     filtered = get_filtered_tickets()
