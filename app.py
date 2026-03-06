@@ -2,7 +2,7 @@ import os
 import json
 import time
 import threading
-import boto3
+
 import requests
 from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
@@ -21,9 +21,13 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ZENDESK_SUBDOMAIN = os.getenv("ZENDESK_SUBDOMAIN", "vergesense")
 ZENDESK_EMAIL = os.getenv("ZENDESK_EMAIL")
 ZENDESK_API_TOKEN = os.getenv("ZENDESK_API_TOKEN")
-S3_BUCKET = os.getenv("S3_BUCKET", "vergesense-technical-support")
-S3_KEY = os.getenv("S3_KEY", "zendesk/tickets/full_export_2026-03-05_23-06-40.json")
-AWS_REGION = os.getenv("AWS_DEFAULT_REGION", "us-west-2")
+DATA_URL = os.getenv(
+    "DATA_URL",
+    "https://github.com/joshuaguyervs/vs-kb-analyzer/releases/download/1.0/tickets.json"
+)
+
+
+
 
 zendesk_auth = (f"{ZENDESK_EMAIL}/token", ZENDESK_API_TOKEN)
 anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -44,24 +48,24 @@ state = {
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_tickets_from_s3():
-    """Download and parse the ticket export from S3."""
+def load_tickets():
+    """Download and parse the ticket export from GitHub Releases."""
     state["loading"] = True
     state["load_status"] = "loading"
-    state["load_message"] = "Connecting to S3..."
+    state["load_message"] = "Downloading ticket data..."
 
     try:
-        s3 = boto3.client("s3", region_name=AWS_REGION)
-        state["load_message"] = f"Downloading ticket export ({S3_KEY})..."
-        obj = s3.get_object(Bucket=S3_BUCKET, Key=S3_KEY)
-        raw = obj["Body"].read().decode("utf-8")
+        state["load_message"] = f"Downloading ticket export (~330MB, this takes a minute)..."
+        resp = requests.get(DATA_URL, timeout=300, stream=True)
+        if resp.status_code != 200:
+            raise Exception(f"HTTP {resp.status_code} fetching data file")
         state["load_message"] = "Parsing ticket data..."
-        data = json.loads(raw)
+        data = json.loads(resp.content)
         state["tickets"] = data.get("tickets", [])
-        state["load_message"] = f"Loaded {len(state['tickets'])} tickets from S3."
+        state["load_message"] = f"Loaded {len(state['tickets'])} tickets."
     except Exception as e:
         state["load_status"] = "error"
-        state["load_message"] = f"S3 error: {str(e)}"
+        state["load_message"] = f"Data load error: {str(e)}"
         state["loading"] = False
         return
 
@@ -388,7 +392,7 @@ def api_reload():
     if state["loading"]:
         return jsonify({"error": "Already loading"}), 400
     state["analysis_cache"] = {}
-    thread = threading.Thread(target=load_tickets_from_s3, daemon=True)
+    thread = threading.Thread(target=load_tickets, daemon=True)
     thread.start()
     return jsonify({"ok": True})
 
@@ -471,7 +475,7 @@ def api_draft_article(cluster_id):
 # ---------------------------------------------------------------------------
 
 def startup():
-    thread = threading.Thread(target=load_tickets_from_s3, daemon=True)
+    thread = threading.Thread(target=load_tickets, daemon=True)
     thread.start()
 
 
