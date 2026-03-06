@@ -473,14 +473,23 @@ def api_draft_article(cluster_id):
 
 
 # ---------------------------------------------------------------------------
-# Startup
+# Startup -- use @app.before_request so it fires in whichever worker
+# receives the first request, regardless of gunicorn worker count
 # ---------------------------------------------------------------------------
 
-def startup():
-    thread = threading.Thread(target=load_tickets, daemon=True)
-    thread.start()
+_startup_done = False
+_startup_lock = threading.Lock()
+
+@app.before_request
+def startup_once():
+    global _startup_done
+    if not _startup_done:
+        with _startup_lock:
+            if not _startup_done:
+                _startup_done = True
+                thread = threading.Thread(target=load_tickets, daemon=True)
+                thread.start()
 
 
 if __name__ == "__main__":
-    startup()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
