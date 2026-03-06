@@ -260,7 +260,8 @@ def call_claude(system, user, max_tokens=2000):
         model="claude-sonnet-4-5",
         max_tokens=max_tokens,
         system=system,
-        messages=[{"role": "user", "content": user}]
+        messages=[{"role": "user", "content": user}],
+        timeout=180.0
     )
     return msg.content[0].text
 
@@ -419,6 +420,8 @@ def generate_article_revision(article, analysis):
 
     title = article.get("title", "")
     body = article.get("body", "")[:4000]
+    if not isinstance(analysis, dict):
+        analysis = {}
     issues = analysis.get("issues", [])
     suggestions = analysis.get("suggestions", [])
     unanswered = analysis.get("unanswered_questions", [])
@@ -467,8 +470,11 @@ Return as JSON with keys:
 - changelog: array of strings describing what changed vs the original"""
 
     result = call_claude_json(system, user, max_tokens=4000)
-    result["article_id"] = article_id
-    result["article_title"] = title
+    if not isinstance(result, dict):
+        result = {"error": "Claude returned an unexpected response. Try again."}
+    else:
+        result["article_id"] = article_id
+        result["article_title"] = title
     state["analysis_cache"][cache_key] = result
     return result
 
@@ -739,11 +745,35 @@ def api_revise_article(article_id):
     article = next((a for a in state["kb_articles"] if a.get("id") == article_id), None)
     if not article:
         return jsonify({"error": "Article not found"}), 404
-    # Need the analysis to inform the revision; run it if not cached
-    analysis_key = f"improve_{article_id}"
-    analysis = state["analysis_cache"].get(analysis_key) or analyze_article_improvement(article)
-    result = generate_article_revision(article, analysis)
-    return jsonify(result)
+
+    cache_key = f"revision_{article_id}"
+
+    # Return cached result immediately if available
+    if cache_key in state["analysis_cache"]:
+        return jsonify(state["analysis_cache"][cache_key])
+
+    # Check if already running
+    job_key = f"job_{cache_key}"
+    if state["analysis_cache"].get(job_key) == "running":
+        return jsonify({"status": "pending"}), 202
+
+    # Kick off background thread
+    state["analysis_cache"][job_key] = "running"
+
+    def run():
+        try:
+            analysis_key = f"improve_{article_id}"
+            analysis = state["analysis_cache"].get(analysis_key) or analyze_article_improvement(article)
+            result = generate_article_revision(article, analysis)
+            state["analysis_cache"][cache_key] = result
+        except Exception as e:
+            state["analysis_cache"][cache_key] = {"error": str(e)}
+            app.logger.error(f"Revision error: {e}")
+        finally:
+            state["analysis_cache"].pop(job_key, None)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"status": "pending"}), 202
 
 
 @app.route("/api/outdated")

@@ -570,37 +570,57 @@ function analyzeArticle(id, title) {
   });
 }
 
+function renderRevision(d, id, title) {
+  window._lastDraft = d;
+  const changelog = (d.changelog||[]).map(c =>
+    '<div class="list-item"><span class="list-bullet" style="color:var(--green);">✓</span><span>' + c + '</span></div>'
+  ).join('');
+  const sections = (d.sections||[]).map(s =>
+    '<div class="draft-section"><h3>' + s.heading + '</h3><p>' + s.content + '</p></div>'
+  ).join('');
+  const trouble = (d.troubleshooting||[]).map(t =>
+    '<div class="draft-section"><h3>' + t.problem + '</h3><p>' + t.solution + '</p></div>'
+  ).join('');
+  document.getElementById('detailTitle').textContent = d.title || title;
+  document.getElementById('detailBody').innerHTML =
+    '<div style="font-size:11px;color:var(--amber);font-family:var(--mono);margin-bottom:16px;">REVISED ARTICLE</div>' +
+    '<div class="draft-section"><h3>Introduction</h3><p>' + (d.intro||'') + '</p></div>' +
+    sections +
+    (trouble ? '<div class="draft-section"><h3>Troubleshooting</h3>' + trouble + '</div>' : '') +
+    (changelog ? '<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);"><div style="font-size:12px;color:var(--muted);margin-bottom:8px;">WHAT CHANGED</div>' + changelog + '</div>' : '') +
+    '<div style="margin-top:16px;display:flex;gap:8px;">' +
+    '<button class="btn" onclick="copyDraftHTML()">Copy as HTML for Zendesk</button>' +
+    '<button class="btn" onclick="copyDraftMarkdown()">Copy as Markdown</button>' +
+    '<button class="btn" onclick="analyzeArticle(' + id + ', \'' + title.replace(/'/g,"\\'") + '\')" style="margin-left:auto;">← Back to Analysis</button>' +
+    '</div>';
+}
+
 function reviseArticle(id, title) {
   document.getElementById('detailTitle').textContent = 'Revising: ' + title;
-  document.getElementById('detailBody').innerHTML = '<div class="analyzing"><div class="loading-spinner"></div>Claude is rewriting the article...</div>';
-  fetch('/api/articles/' + id + '/revise').then(r => r.json()).then(d => {
-    if (d.error) {
-      document.getElementById('detailBody').innerHTML = '<div style="color:var(--red);">Error: ' + d.error + '</div>';
-      return;
-    }
-    window._lastDraft = d;
-    const changelog = (d.changelog||[]).map(c =>
-      '<div class="list-item"><span class="list-bullet" style="color:var(--green);">✓</span><span>' + c + '</span></div>'
-    ).join('');
-    const sections = (d.sections||[]).map(s =>
-      '<div class="draft-section"><h3>' + s.heading + '</h3><p>' + s.content + '</p></div>'
-    ).join('');
-    const trouble = (d.troubleshooting||[]).map(t =>
-      '<div class="draft-section"><h3>' + t.problem + '</h3><p>' + t.solution + '</p></div>'
-    ).join('');
-    document.getElementById('detailTitle').textContent = d.title || title;
-    document.getElementById('detailBody').innerHTML =
-      '<div style="font-size:11px;color:var(--amber);font-family:var(--mono);margin-bottom:16px;">REVISED ARTICLE</div>' +
-      '<div class="draft-section"><h3>Introduction</h3><p>' + (d.intro||'') + '</p></div>' +
-      sections +
-      (trouble ? '<div class="draft-section"><h3>Troubleshooting</h3>' + trouble + '</div>' : '') +
-      (changelog ? '<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);"><div style="font-size:12px;color:var(--muted);margin-bottom:8px;">WHAT CHANGED</div>' + changelog + '</div>' : '') +
-      '<div style="margin-top:16px;display:flex;gap:8px;">' +
-      '<button class="btn" onclick="copyDraftHTML()">Copy as HTML for Zendesk</button>' +
-      '<button class="btn" onclick="copyDraftMarkdown()">Copy as Markdown</button>' +
-      '<button class="btn" onclick="analyzeArticle(' + id + ', \'' + title.replace(/'/g,"\\'") + '\')" style="margin-left:auto;">← Back to Analysis</button>' +
-      '</div>';
-  });
+  document.getElementById('detailBody').innerHTML = '<div class="analyzing"><div class="loading-spinner"></div>Claude is rewriting the article... (this takes ~60 seconds)</div>';
+  openDetail();
+
+  function poll() {
+    fetch('/api/articles/' + id + '/revise').then(r => {
+      if (r.status === 202) {
+        // Still running, poll again
+        setTimeout(poll, 3000);
+        return null;
+      }
+      return r.json();
+    }).then(d => {
+      if (!d) return;
+      if (d.error) {
+        document.getElementById('detailBody').innerHTML = '<div style="color:var(--red);">Error: ' + d.error + '</div>';
+        return;
+      }
+      renderRevision(d, id, title);
+    }).catch(e => {
+      document.getElementById('detailBody').innerHTML = '<div style="color:var(--red);">Request failed: ' + e + '</div>';
+    });
+  }
+
+  poll();
 }
 
 function runOutdatedAnalysis() {
