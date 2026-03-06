@@ -91,25 +91,22 @@ def get_filtered_tickets():
 # Data loading
 # ---------------------------------------------------------------------------
 
-def fetch_zendesk_lookup(endpoint):
-    """Fetch all pages of a Zendesk endpoint and return items list."""
+def fetch_zendesk_lookup(resource_key, path):
+    """Fetch all pages of a Zendesk list endpoint and return items list."""
     auth = (f"{ZENDESK_EMAIL}/token", ZENDESK_API_TOKEN)
-    base = f"https://{ZENDESK_SUBDOMAIN}.zendesk.com/api/v2/{endpoint}"
     items = []
-    url = base
+    url = f"https://{ZENDESK_SUBDOMAIN}.zendesk.com/api/v2/{path}"
     while url:
         try:
             r = requests.get(url, auth=auth, timeout=30)
             if r.status_code != 200:
+                app.logger.warning(f"Zendesk {path} returned {r.status_code}: {r.text[:200]}")
                 break
             data = r.json()
-            # endpoint returns either 'organizations' or 'users'
-            for key in ('organizations', 'users'):
-                if key in data:
-                    items.extend(data[key])
-                    break
+            items.extend(data.get(resource_key, []))
             url = data.get("next_page")
-        except Exception:
+        except Exception as e:
+            app.logger.warning(f"Zendesk lookup error for {path}: {e}")
             break
     return items
 
@@ -163,11 +160,11 @@ def load_tickets():
 
         # Fetch org and user names from Zendesk for human-readable filter dropdowns
         state["load_message"] = "Fetching organization names..."
-        orgs = fetch_zendesk_lookup("organizations.json?page[size]=100")
+        orgs = fetch_zendesk_lookup("organizations", "organizations.json?per_page=100")
         state["org_names"] = {o["id"]: o["name"] for o in orgs}
 
         state["load_message"] = "Fetching agent names..."
-        users = fetch_zendesk_lookup("users.json?role=agent&page[size]=100")
+        users = fetch_zendesk_lookup("users", "users.json?role=agent&per_page=100")
         state["user_names"] = {u["id"]: u["name"] for u in users}
     except Exception as e:
         state["load_status"] = "error"
