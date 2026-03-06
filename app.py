@@ -660,11 +660,27 @@ def api_draft_article(cluster_id):
     cluster = None
     for key, val in state["analysis_cache"].items():
         if key.startswith("clusters:") or key == "clusters":
-            cluster = next((c for c in (val or []) if c.get("id") == cluster_id), None)
+            # Match on id OR on slugified name as fallback
+            for c in (val or []):
+                cid = c.get("id", "")
+                if cid == cluster_id:
+                    cluster = c
+                    break
+                # fallback: compare slugified name
+                import re
+                slug = re.sub(r"[^a-z0-9]+", "_", (c.get("name") or "").lower()).strip("_")
+                if slug == cluster_id:
+                    cluster = c
+                    break
             if cluster:
                 break
     if not cluster:
-        return jsonify({"error": "Cluster not found -- run gap analysis first"}), 404
+        cached_ids = []
+        for key, val in state["analysis_cache"].items():
+            if key.startswith("clusters:") or key == "clusters":
+                cached_ids = [c.get("id") for c in (val or [])]
+        app.logger.warning(f"Draft: cluster_id={cluster_id!r}, cached ids={cached_ids}")
+        return jsonify({"error": "Cluster not found -- run gap analysis first", "requested": cluster_id, "available": cached_ids}), 404
     result = generate_new_article_draft(cluster)
     return jsonify(result)
 
