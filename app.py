@@ -56,7 +56,7 @@ def load_tickets():
 
     try:
         state["load_message"] = f"Downloading ticket export (~330MB, this takes a minute)..."
-        resp = requests.get(DATA_URL, timeout=300, stream=True)
+        resp = requests.get(DATA_URL, timeout=300, stream=True, headers={"User-Agent": "vs-kb-analyzer/1.0"})
         if resp.status_code != 200:
             raise Exception(f"HTTP {resp.status_code} fetching data file")
         state["load_message"] = "Parsing ticket data..."
