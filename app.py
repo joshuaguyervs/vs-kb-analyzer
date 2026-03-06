@@ -178,8 +178,29 @@ def load_tickets():
         state["org_names"] = {o["id"]: o["name"] for o in orgs}
 
         state["load_message"] = "Fetching agent names..."
-        users = fetch_zendesk_lookup("users", "users.json?role=agent&per_page=100")
-        state["user_names"] = {u["id"]: u["name"] for u in users}
+        agents = fetch_zendesk_lookup("users", "users.json?role=agent&per_page=100")
+        state["user_names"] = {u["id"]: u["name"] for u in agents}
+
+        # Also fetch end-user names for requester filter dropdown
+        # Batch lookup by unique requester_ids found in tickets
+        state["load_message"] = "Fetching requester names..."
+        requester_ids = list({t["requester_id"] for t in state["tickets"] if t.get("requester_id")})
+        auth = (f"{ZENDESK_EMAIL}/token", ZENDESK_API_TOKEN)
+        # Zendesk allows up to 100 IDs per request via /users/show_many
+        for i in range(0, min(len(requester_ids), 2000), 100):
+            batch = requester_ids[i:i+100]
+            try:
+                r = requests.get(
+                    f"https://{ZENDESK_SUBDOMAIN}.zendesk.com/api/v2/users/show_many.json",
+                    params={"ids": ",".join(str(x) for x in batch)},
+                    auth=auth,
+                    timeout=30
+                )
+                if r.status_code == 200:
+                    for u in r.json().get("users", []):
+                        state["user_names"][u["id"]] = u["name"]
+            except Exception as e:
+                app.logger.warning(f"Requester batch fetch error: {e}")
     except Exception as e:
         state["load_status"] = "error"
         state["load_message"] = f"Data load error: {str(e)}"
@@ -558,8 +579,7 @@ def api_filter_options():
     for t in state["tickets"]:
         rid = t.get("requester_id")
         if rid:
-            req = t.get("requester") or {}
-            rname = (req.get("name") or req.get("email") or str(rid)) if isinstance(req, dict) else str(rid)
+            rname = state["user_names"].get(rid) or str(rid)
             requesters[rid] = rname
 
     return jsonify({
