@@ -408,6 +408,70 @@ Return as JSON with keys:
     return result
 
 
+
+
+def generate_article_revision(article, analysis):
+    """Rewrite an existing KB article incorporating improvement analysis."""
+    article_id = article.get("id")
+    cache_key = f"revision_{article_id}"
+    if cache_key in state["analysis_cache"]:
+        return state["analysis_cache"][cache_key]
+
+    title = article.get("title", "")
+    body = article.get("body", "")[:4000]
+    issues = analysis.get("issues", [])
+    suggestions = analysis.get("suggestions", [])
+    unanswered = analysis.get("unanswered_questions", [])
+
+    # Find related tickets for context
+    keywords = [w.lower() for w in title.split() if len(w) > 3]
+    related = []
+    for t in get_filtered_tickets():
+        subj = t.get("subject", "").lower()
+        if any(k in subj for k in keywords):
+            related.append(t)
+        if len(related) >= 10:
+            break
+    ticket_context = "\n\n---\n\n".join(ticket_summary_text(t) for t in related[:5])
+
+    system = """You are a technical writer rewriting Zendesk Help Center articles for VergeSense, 
+a workplace occupancy intelligence platform. Produce clear, complete, customer-facing documentation."""
+
+    user = f"""Rewrite this KB article to fix all identified issues and incorporate all suggestions.
+
+Original article: "{title}"
+
+Original content:
+{body}
+
+Issues to fix:
+{chr(10).join("- " + i for i in issues)}
+
+Improvement suggestions to incorporate:
+{chr(10).join("- " + s for s in suggestions)}
+
+Customer questions that should now be answered:
+{chr(10).join("- " + q for q in unanswered)}
+
+Related support tickets for additional context:
+{ticket_context if ticket_context else "None available."}
+
+Write the complete revised article. Keep what works, fix what doesn't, add what's missing.
+Maintain a clear, friendly tone suitable for IT admins and facilities managers.
+
+Return as JSON with keys:
+- title: string (keep or improve the original title)
+- intro: string (1-2 sentence overview)
+- sections: array of objects with "heading" and "content" keys
+- troubleshooting: array of objects with "problem" and "solution" keys
+- changelog: array of strings describing what changed vs the original"""
+
+    result = call_claude_json(system, user, max_tokens=4000)
+    result["article_id"] = article_id
+    result["article_title"] = title
+    state["analysis_cache"][cache_key] = result
+    return result
+
 def analyze_outdated_articles(articles, tickets):
     """Flag articles that tickets suggest are outdated or wrong."""
     cache_key = "outdated"
@@ -665,6 +729,20 @@ def api_analyze_article(article_id):
     if not article:
         return jsonify({"error": "Article not found"}), 404
     result = analyze_article_improvement(article)
+    return jsonify(result)
+
+
+@app.route("/api/articles/<int:article_id>/revise")
+def api_revise_article(article_id):
+    if state["load_status"] != "ready":
+        return jsonify({"error": "Data not ready"}), 503
+    article = next((a for a in state["kb_articles"] if a.get("id") == article_id), None)
+    if not article:
+        return jsonify({"error": "Article not found"}), 404
+    # Need the analysis to inform the revision; run it if not cached
+    analysis_key = f"improve_{article_id}"
+    analysis = state["analysis_cache"].get(analysis_key) or analyze_article_improvement(article)
+    result = generate_article_revision(article, analysis)
     return jsonify(result)
 
 
