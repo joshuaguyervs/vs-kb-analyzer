@@ -38,6 +38,8 @@ anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 state = {
     "tickets": [],
     "kb_articles": [],
+    "org_names": {},    # org_id -> name
+    "user_names": {},   # user_id -> name
     "loading": False,
     "load_status": "idle",  # idle | loading | ready | error
     "load_message": "",
@@ -89,6 +91,29 @@ def get_filtered_tickets():
 # Data loading
 # ---------------------------------------------------------------------------
 
+def fetch_zendesk_lookup(endpoint):
+    """Fetch all pages of a Zendesk endpoint and return items list."""
+    auth = (f"{ZENDESK_EMAIL}/token", ZENDESK_API_TOKEN)
+    base = f"https://{ZENDESK_SUBDOMAIN}.zendesk.com/api/v2/{endpoint}"
+    items = []
+    url = base
+    while url:
+        try:
+            r = requests.get(url, auth=auth, timeout=30)
+            if r.status_code != 200:
+                break
+            data = r.json()
+            # endpoint returns either 'organizations' or 'users'
+            for key in ('organizations', 'users'):
+                if key in data:
+                    items.extend(data[key])
+                    break
+            url = data.get("next_page")
+        except Exception:
+            break
+    return items
+
+
 def load_tickets():
     """Download and parse the ticket export from GitHub Releases."""
     state["loading"] = True
@@ -135,6 +160,15 @@ def load_tickets():
         state["tickets"] = [t for t in all_tickets if not is_noise(t)]
         filtered = len(all_tickets) - len(state["tickets"])
         state["load_message"] = f"Loaded {len(state['tickets'])} tickets ({filtered} automation/test tickets filtered)."
+
+        # Fetch org and user names from Zendesk for human-readable filter dropdowns
+        state["load_message"] = "Fetching organization names..."
+        orgs = fetch_zendesk_lookup("organizations.json?page[size]=100")
+        state["org_names"] = {o["id"]: o["name"] for o in orgs}
+
+        state["load_message"] = "Fetching agent names..."
+        users = fetch_zendesk_lookup("users.json?role=agent&page[size]=100")
+        state["user_names"] = {u["id"]: u["name"] for u in users}
     except Exception as e:
         state["load_status"] = "error"
         state["load_message"] = f"Data load error: {str(e)}"
@@ -484,21 +518,13 @@ def api_filter_options():
 
     for t in state["tickets"]:
         aid = t.get("assignee_id")
-        aname = t.get("assignee", {})
-        if isinstance(aname, dict):
-            aname = aname.get("name") or aname.get("email") or str(aid)
-        else:
-            aname = str(aid) if aid else None
-        if aid and aname:
+        if aid:
+            aname = state["user_names"].get(aid) or str(aid)
             assignees[aid] = aname
 
         oid = t.get("organization_id")
-        oname = t.get("organization", {})
-        if isinstance(oname, dict):
-            oname = oname.get("name") or str(oid)
-        else:
-            oname = str(oid) if oid else None
-        if oid and oname:
+        if oid:
+            oname = state["org_names"].get(oid) or str(oid)
             orgs[oid] = oname
 
         for tag in (t.get("tags") or []):
