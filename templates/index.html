@@ -464,12 +464,60 @@ function draftArticle(clusterId) {
       '<div class="draft-section"><h3>Introduction</h3><p>' + (d.intro||'') + '</p></div>' +
       sections +
       (trouble ? '<div class="draft-section"><h3>Troubleshooting</h3>' + trouble + '</div>' : '') +
-      '<div><button class="btn" onclick="copyDraft()">Copy as Markdown</button></div>';
+      '<div><button class="btn" onclick="copyDraftHTML()">Copy as HTML for Zendesk</button> <button class="btn" onclick="copyDraftMarkdown()">Copy as Markdown</button></div>';
     window._lastDraft = d;
   });
 }
 
-function copyDraft() {
+function toZendeskHtml(text) {
+  if (!text) return '';
+  const lines = text.split('\n').filter(l => l.trim());
+  let out = '';
+  let listItems = [];
+  function flushList() {
+    if (listItems.length) {
+      out += '<ul>\n' + listItems.map(li => '<li>' + li + '</li>').join('\n') + '\n</ul>\n';
+      listItems = [];
+    }
+  }
+  lines.forEach(line => {
+    line = line.trim();
+    line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    if (/^[\d]+\.\s/.test(line) || /^[-*•]\s/.test(line)) {
+      listItems.push(line.replace(/^[\d]+\.\s|^[-*•]\s/, ''));
+    } else {
+      flushList();
+      out += '<p>' + line + '</p>\n';
+    }
+  });
+  flushList();
+  return out;
+}
+
+function buildDraftHTML(d) {
+  let html = '<h1>' + (d.title || '') + '</h1>\n';
+  html += '<p>' + (d.intro || '') + '</p>\n';
+  (d.sections || []).forEach(s => {
+    html += '<h2>' + s.heading + '</h2>\n';
+    html += toZendeskHtml(s.content);
+  });
+  if ((d.troubleshooting || []).length) {
+    html += '<h2>Troubleshooting</h2>\n';
+    d.troubleshooting.forEach(t => {
+      html += '<h3>' + t.problem + '</h3>\n';
+      html += toZendeskHtml(t.solution);
+    });
+  }
+  return html;
+}
+
+function copyDraftHTML() {
+  const d = window._lastDraft;
+  if (!d) return;
+  navigator.clipboard.writeText(buildDraftHTML(d)).then(() => alert('HTML copied! In Zendesk, click the HTML button in the editor toolbar and paste.'));
+}
+
+function copyDraftMarkdown() {
   const d = window._lastDraft;
   if (!d) return;
   let md = '# ' + d.title + '\n\n' + d.intro + '\n\n';
@@ -478,7 +526,7 @@ function copyDraft() {
     md += '## Troubleshooting\n\n';
     d.troubleshooting.forEach(t => { md += '**' + t.problem + '**\n' + t.solution + '\n\n'; });
   }
-  navigator.clipboard.writeText(md).then(() => alert('Copied to clipboard!'));
+  navigator.clipboard.writeText(md).then(() => alert('Markdown copied to clipboard!'));
 }
 
 function loadArticles() {
