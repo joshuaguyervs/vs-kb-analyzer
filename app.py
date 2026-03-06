@@ -248,9 +248,14 @@ def analyze_topic_clusters(tickets, kb_articles):
     Cluster tickets into topics, count frequency, and identify KB gaps.
     Returns list of cluster dicts.
     """
-    cache_key = "clusters"
+    # Cache key includes filter fingerprint so filtered runs don't return unfiltered results
+    f = state["filters"]
+    cache_key = f"clusters:{f['date_from']}:{f['date_to']}:{sorted(f['tags_include'])}:{sorted(f['tags_exclude'])}:{sorted(f['assignee_ids'])}:{sorted(f['org_ids'])}"
     if cache_key in state["analysis_cache"]:
         return state["analysis_cache"][cache_key]
+
+    if not tickets:
+        return []
 
     # Sample up to 300 tickets for clustering (representative sample)
     sample = tickets[:300]
