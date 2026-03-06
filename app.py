@@ -606,7 +606,11 @@ def api_set_filters():
     state["filters"]["org_ids"] = [int(x) for x in data.get("org_ids") or []]
     state["filters"]["exclude_requester_ids"] = [int(x) for x in data.get("exclude_requester_ids") or []]
     # Clear analysis cache so results re-run against new filter set
-    state["analysis_cache"] = {}
+    # Keep draft cache entries since they aren't filter-dependent
+    state["analysis_cache"] = {
+        k: v for k, v in state["analysis_cache"].items()
+        if k.startswith("draft_")
+    }
     filtered = get_filtered_tickets()
     return jsonify({"ok": True, "matched_tickets": len(filtered)})
 
@@ -695,6 +699,10 @@ def api_draft_article(cluster_id):
             if cluster:
                 break
     if not cluster:
+        # Check if we have a cached draft already (cluster wiped by filter change but draft survived)
+        draft_cache_key = f"draft_{cluster_id}"
+        if draft_cache_key in state["analysis_cache"]:
+            return jsonify(state["analysis_cache"][draft_cache_key])
         cached_ids = []
         for key, val in state["analysis_cache"].items():
             if key.startswith("clusters:") or key == "clusters":
